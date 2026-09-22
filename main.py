@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 app = Flask(__name__)
 CORS(app)
 
-# Ortak kupon hafızası (Geçici bulut belleği)
 shared_coupon_data = None
 
 LEAGUES = [
@@ -27,7 +26,7 @@ def handle_coupon():
     global shared_coupon_data
     if request.method == 'POST':
         shared_coupon_data = request.json
-        return jsonify({'status': 'success', 'message': 'Kupon ortak belleğe kaydedildi'})
+        return jsonify({'status': 'success', 'message': 'Kupon kaydedildi'})
     else:
         return jsonify({'status': 'success', 'coupon': shared_coupon_data})
 
@@ -35,7 +34,9 @@ def handle_coupon():
 def get_scores():
     all_matches = []
     today = datetime.now()
-    date_list = [(today - timedelta(days=i)).strftime("%Y%m%d") for i in range(5)]
+    
+    # Geçmiş 3 gün, bugün ve GELECEK 5 günü kapsayan tarih dizisi (-3 ile +5 arası)
+    date_list = [(today + timedelta(days=i)).strftime("%Y%m%d") for i in range(-3, 6)]
 
     for league in LEAGUES:
         for date_str in date_list:
@@ -51,15 +52,20 @@ def get_scores():
                         away_team = teams[1]['team']['displayName']
                         home_score = teams[0].get('score', '0')
                         away_score = teams[1].get('score', '0')
+                        
                         status_state = comp['status']['type']['state']
                         status = 'FINISHED' if status_state == 'post' else ('LIVE' if status_state == 'in' else 'PENDING')
+                        
+                        # Maç başlama saatini alma
+                        match_date = event.get('date', '')
                         
                         all_matches.append({
                             'home': home_team,
                             'away': away_team,
                             'homeScore': int(home_score) if str(home_score).isdigit() else 0,
                             'awayScore': int(away_score) if str(away_score).isdigit() else 0,
-                            'status': status
+                            'status': status,
+                            'matchDate': match_date
                         })
             except Exception:
                 continue
