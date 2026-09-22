@@ -6,22 +6,23 @@ from datetime import datetime, timedelta
 app = Flask(__name__)
 CORS(app)
 
-# Spor Toto'da yer alan tüm ana ligler
+# Ligler ve UEFA Uluslar Ligi / Milli Maçlar
 LEAGUES = [
-    "tur.1",  # Trendyol Süper Lig
-    "tur.2",  # Trendyol 1. Lig
-    "eng.1",  # İngiltere Premier League
-    "eng.2",  # İngiltere Championship
-    "ger.1",  # Almanya Bundesliga
-    "esp.1",  # İspanya La Liga
-    "ita.1"   # İtalya Serie A
+    "tur.1",        # Trendyol Süper Lig
+    "tur.2",        # Trendyol 1. Lig
+    "uefa.nations", # UEFA Nations League (Uluslar Ligi)
+    "fifa.friendly",# Hazırlık Maçları / Milli Maçlar
+    "eng.1",        # Premier League
+    "ger.1",        # Bundesliga
+    "esp.1",        # La Liga
+    "ita.1"         # Serie A
+    "fra.1"         # Fransa Ligue 1
 ]
 
 @app.route('/api/scores', methods=['GET'])
 def get_scores():
     all_matches = []
     
-    # Son 4 gün ve bugünü kapsayan tekil gün listesi
     today = datetime.now()
     date_list = [(today - timedelta(days=i)).strftime("%Y%m%d") for i in range(5)]
 
@@ -37,10 +38,8 @@ def get_scores():
                         comp = event['competitions'][0]
                         teams = comp['competitors']
                         
-                        # Takım isimleri (Ev / Deplasman)
                         home_team = teams[0]['team']['displayName']
                         away_team = teams[1]['team']['displayName']
-                        
                         home_score = teams[0].get('score', '0')
                         away_score = teams[1].get('score', '0')
                         
