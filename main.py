@@ -92,7 +92,16 @@ def fetch_league_date(args):
     return matches
 
 # --- ENDPOINTLER ---
-
+@app.route('/api/coupons', methods=['GET'])
+def get_all_coupons():
+    coupons = Coupon.query.order_by(Coupon.id.desc()).all()
+    result = [{
+        'id': c.id,
+        'title': c.title,
+        'matches_data': c.matches_data
+    } for c in coupons]
+    return jsonify({'status': 'success', 'coupons': result})
+    
 @app.route('/api/register', methods=['POST'])
 def register():
     data = request.json or {}
