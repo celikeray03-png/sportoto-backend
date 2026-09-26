@@ -1,5 +1,5 @@
 import os, json, requests
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify
 from flask_cors import CORS
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
@@ -7,23 +7,12 @@ from concurrent.futures import ThreadPoolExecutor
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-ADMIN_PASSWORD = "admin"
-FILE_PATH = "coupon.json"
-
-def get_saved_coupon():
-    if os.path.exists(FILE_PATH):
-        try:
-            with open(FILE_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {"title": "Spor Toto Kuponu", "matches_data": None}
-
-def save_coupon_to_file(data):
-    with open(FILE_PATH, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False)
-
 LEAGUES = ["tur.1", "tur.2", "uefa.nations", "fifa.friendly", "eng.1", "ger.1", "esp.1", "ita.1", "fra.1"]
+
+MONTHS_TR = {
+    1: "Ocak", 2: "Şubat", 3: "Mart", 4: "Nisan", 5: "Mayıs", 6: "Haziran",
+    7: "Temmuz", 8: "Ağustos", 9: "Eylül", 10: "Ekim", 11: "Kasım", 12: "Aralık"
+}
 
 def fetch_league_date(args):
     league, date_str = args
@@ -35,33 +24,31 @@ def fetch_league_date(args):
             for event in response.json().get('events', []):
                 comp = event['competitions'][0]
                 teams = comp['competitors']
+                
+                # Tarih ve Saat Bilgisi (UTC -> UTC+3 TR Saati)
+                match_time = "--:--"
+                match_date = ""
+                raw_date = event.get('date')
+                if raw_date:
+                    try:
+                        dt = datetime.strptime(raw_date.split('.')[0].replace('Z', ''), "%Y-%m-%dT%H:%M") + timedelta(hours=3)
+                        match_time = dt.strftime("%H:%M")
+                        match_date = f"{dt.day} {MONTHS_TR.get(dt.month, '')}"
+                    except Exception:
+                        pass
+
                 matches.append({
                     'home': teams[0]['team']['displayName'],
                     'away': teams[1]['team']['displayName'],
                     'homeScore': int(teams[0].get('score', 0)) if str(teams[0].get('score', 0)).isdigit() else 0,
                     'awayScore': int(teams[1].get('score', 0)) if str(teams[1].get('score', 0)).isdigit() else 0,
-                    'status': 'FINISHED' if comp['status']['type']['state'] == 'post' else ('LIVE' if comp['status']['type']['state'] == 'in' else 'PENDING')
+                    'status': 'FINISHED' if comp['status']['type']['state'] == 'post' else ('LIVE' if comp['status']['type']['state'] == 'in' else 'PENDING'),
+                    'matchTime': match_time,
+                    'matchDate': match_date
                 })
     except Exception:
         pass
     return matches
-
-@app.route('/api/coupon', methods=['GET'])
-def get_coupon():
-    return jsonify({'status': 'success', 'coupon': get_saved_coupon()})
-
-@app.route('/api/admin/update-coupon', methods=['POST'])
-def update_coupon():
-    data = request.json or {}
-    if data.get('password') != ADMIN_PASSWORD:
-        return jsonify({'status': 'error', 'message': 'Hatalı şifre!'}), 401
-    
-    coupon_data = {
-        "title": data.get('title', 'Spor Toto Kuponu'),
-        "matches_data": data.get('matches_data')
-    }
-    save_coupon_to_file(coupon_data)
-    return jsonify({'status': 'success', 'message': 'Kupon başarıyla kaydedildi!'})
 
 @app.route('/api/scores', methods=['GET'])
 def get_scores():
