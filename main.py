@@ -2,28 +2,28 @@ import os, requests
 from flask import Flask, jsonify
 from flask_cors import CORS
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
+
+# Bülten maçlarının olduğu temel ligler
+LEAGUES = [
+    "uefa.nations", "fifa.friendly", "tur.1", "tur.2",
+    "eng.1", "ger.1", "esp.1", "ita.1", "fra.1"
+]
 
 MONTHS_TR = {
     1: "Ocak", 2: "Şubat", 3: "Mart", 4: "Nisan", 5: "Mayıs", 6: "Haziran",
     7: "Temmuz", 8: "Ağustos", 9: "Eylül", 10: "Ekim", 11: "Kasım", 12: "Aralık"
 }
 
-@app.route('/api/scores', methods=['GET'])
-def get_scores():
-    all_matches = []
-    today = datetime.now()
-    
-    # Dün + Bugün + Önümüzdeki 4 Günün tarih parametre dizisi (Tek adrese atılır)
-    dates_param = ",".join([(today + timedelta(days=i)).strftime("%Y%m%d") for i in range(-1, 5)])
-    
+def fetch_single_league_date(args):
+    league, date_str = args
+    matches = []
     try:
-        # TEK BİR İSTEKLE TÜM FUTBOL MAÇLARINI ÇEKİYORUZ
-        url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/scoreboard?dates={dates_param}&limit=500"
-        res = requests.get(url, timeout=4.0)
-        
+        url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{league}/scoreboard?dates={date_str}"
+        res = requests.get(url, timeout=2.5)
         if res.status_code == 200:
             for event in res.json().get('events', []):
                 comp = event['competitions'][0]
@@ -55,7 +55,7 @@ def get_scores():
                     else:
                         match_minute = "Canlı"
 
-                all_matches.append({
+                matches.append({
                     'home': teams[0]['team']['displayName'],
                     'away': teams[1]['team']['displayName'],
                     'homeScore': int(teams[0].get('score', 0)) if str(teams[0].get('score', 0)).isdigit() else 0,
@@ -65,8 +65,23 @@ def get_scores():
                     'matchDate': match_date,
                     'matchMinute': match_minute
                 })
-    except Exception as e:
-        print("Hata:", e)
+    except Exception:
+        pass
+    return matches
+
+@app.route('/api/scores', methods=['GET'])
+def get_scores():
+    all_matches = []
+    today = datetime.now()
+    
+    # Dün + Bugün + Önümüzdeki 4 Gün (Toplam 6 Gün)
+    date_list = [(today + timedelta(days=i)).strftime("%Y%m%d") for i in range(-1, 5)]
+    tasks = [(league, d) for league in LEAGUES for d in date_list]
+
+    # ThreadPoolExecutor ile paralel sorgulama yapıp süreyi kısa tutuyoruz
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        for res in executor.map(fetch_single_league_date, tasks):
+            all_matches.extend(res)
 
     return jsonify({'status': 'success', 'matches': all_matches})
 
