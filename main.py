@@ -7,7 +7,8 @@ from concurrent.futures import ThreadPoolExecutor
 from flask_sqlalchemy import SQLAlchemy
 
 app = Flask(__name__)
-CORS(app)
+# Tüm domainlere ve Origin isteklerine izin ver
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:postgres@localhost:5432/postgres')
 if DATABASE_URL.startswith("postgres://"):
@@ -49,7 +50,7 @@ def fetch_league_date(args):
     matches = []
     try:
         url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{league}/scoreboard?dates={date_str}"
-        response = requests.get(url, timeout=2.5)
+        response = requests.get(url, timeout=3.0)
         if response.status_code == 200:
             data = response.json()
             for event in data.get('events', []):
@@ -62,12 +63,29 @@ def fetch_league_date(args):
                 status_state = comp['status']['type']['state']
                 status = 'FINISHED' if status_state == 'post' else ('LIVE' if status_state == 'in' else 'PENDING')
                 
+                # Maç Saati Hesaplama (UTC -> TR Saati UTC+3)
+                match_time = "--:--"
+                raw_date = event.get('date')
+                if raw_date:
+                    try:
+                        dt = datetime.strptime(raw_date, "%Y-%m-%dT%HZ")
+                        dt_tr = dt + timedelta(hours=3)
+                        match_time = dt_tr.strftime("%H:%M")
+                    except Exception:
+                        try:
+                            dt = datetime.strptime(raw_date, "%Y-%m-%dT%H:%MZ")
+                            dt_tr = dt + timedelta(hours=3)
+                            match_time = dt_tr.strftime("%H:%M")
+                        except Exception:
+                            pass
+
                 matches.append({
                     'home': home_team,
                     'away': away_team,
                     'homeScore': int(home_score) if str(home_score).isdigit() else 0,
                     'awayScore': int(away_score) if str(away_score).isdigit() else 0,
-                    'status': status
+                    'status': status,
+                    'matchTime': match_time
                 })
     except Exception:
         pass
@@ -77,7 +95,7 @@ def fetch_league_date(args):
 
 @app.route('/api/register', methods=['POST'])
 def register():
-    data = request.json
+    data = request.json or {}
     username = data.get('username', '').strip().lower()
     password = data.get('password', '').strip()
 
@@ -95,7 +113,7 @@ def register():
 
 @app.route('/api/login', methods=['POST'])
 def login():
-    data = request.json
+    data = request.json or {}
     username = data.get('username', '').strip().lower()
     password = data.get('password', '').strip()
 
@@ -111,14 +129,13 @@ def get_users():
     user_list = [{'id': u.id, 'username': u.username} for u in users]
     return jsonify({'status': 'success', 'users': user_list})
 
-# Spor Toto Kupon Kaydetme
 @app.route('/api/save-coupon', methods=['POST'])
 def save_coupon():
-    data = request.json
+    data = request.json or {}
     user_id = data.get('user_id')
     title = data.get('title', 'Spor Toto Kuponum')
     matches_data = data.get('matches_data')
-    target_user_ids = data.get('target_user_ids', []) # Admin ise seçtiği kullanıcı id'leri
+    target_user_ids = data.get('target_user_ids', [])
 
     user = User.query.get(user_id)
     if not user:
@@ -128,7 +145,6 @@ def save_coupon():
     db.session.add(new_coupon)
     db.session.commit()
 
-    # Admin başkalarına atadıysa izin tablosuna ekle
     if user.role == 'admin' and target_user_ids:
         for uid in target_user_ids:
             perm = UserPermission(user_id=uid, coupon_id=new_coupon.id)
@@ -137,22 +153,17 @@ def save_coupon():
 
     return jsonify({'status': 'success', 'message': 'Kupon başarıyla kaydedildi.'})
 
-# Kullanıcının Kuponlarını Getir
 @app.route('/api/user/coupons/<int:user_id>', methods=['GET'])
 def get_user_coupons(user_id):
     user = User.query.get(user_id)
     if not user:
         return jsonify({'status': 'error', 'message': 'Kullanıcı bulunamadı.'}), 404
 
-    # 1. Kullanıcının kendi yüklediği kuponlar
     own_coupons = Coupon.query.filter_by(created_by=user_id).all()
-
-    # 2. Admin'in bu kullanıcıya gösterilmesini onayladığı kuponlar
     perms = UserPermission.query.filter_by(user_id=user_id).all()
     permitted_coupon_ids = [p.coupon_id for p in perms]
     permitted_coupons = Coupon.query.filter(Coupon.id.in_(permitted_coupon_ids)).all()
 
-    # Birleştir
     all_coupons_dict = {c.id: c for c in own_coupons + permitted_coupons}
     sorted_coupons = sorted(all_coupons_dict.values(), key=lambda x: x.id, reverse=True)
 
@@ -179,7 +190,14 @@ def get_scores():
 
     return jsonify({'status': 'success', 'matches': all_matches})
 
+# Veritabanı Başlatma & Varsayılan Admin Hesabını Kesinleştirme
+with app.app_context():
+    db.create_all()
+    admin_user = User.query.filter_by(username='admin').first()
+    if not admin_user:
+        admin_user = User(username='admin', password='admin123', role='admin')
+        db.session.add(admin_user)
+        db.session.commit()
+
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
     app.run(host='0.0.0.0', port=5000)
