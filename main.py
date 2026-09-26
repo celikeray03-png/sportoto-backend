@@ -27,6 +27,7 @@ def fetch_league_date(args):
             for event in response.json().get('events', []):
                 comp = event['competitions'][0]
                 teams = comp['competitors']
+                status_obj = comp.get('status', {})
                 
                 match_time = "--:--"
                 match_date = ""
@@ -39,14 +40,20 @@ def fetch_league_date(args):
                     except Exception:
                         pass
 
+                # Canlı dakika bilgisi (Örn: "67'", "45+2'")
+                display_clock = status_obj.get('displayClock', '')
+                if display_clock and not display_clock.endswith("'"):
+                    display_clock += "'"
+
                 matches.append({
                     'home': teams[0]['team']['displayName'],
                     'away': teams[1]['team']['displayName'],
                     'homeScore': int(teams[0].get('score', 0)) if str(teams[0].get('score', 0)).isdigit() else 0,
                     'awayScore': int(teams[1].get('score', 0)) if str(teams[1].get('score', 0)).isdigit() else 0,
-                    'status': 'FINISHED' if comp['status']['type']['state'] == 'post' else ('LIVE' if comp['status']['type']['state'] == 'in' else 'PENDING'),
+                    'status': 'FINISHED' if status_obj.get('type', {}).get('state') == 'post' else ('LIVE' if status_obj.get('type', {}).get('state') == 'in' else 'PENDING'),
                     'matchTime': match_time,
-                    'matchDate': match_date
+                    'matchDate': match_date,
+                    'matchMinute': display_clock
                 })
     except Exception:
         pass
@@ -56,7 +63,6 @@ def fetch_league_date(args):
 def get_scores():
     all_matches = []
     today = datetime.now()
-    # Dün + Bugün + Önümüzdeki 5 Gün
     date_list = [(today + timedelta(days=i)).strftime("%Y%m%d") for i in range(-1, 6)]
     tasks = [(league, d) for league in LEAGUES for d in date_list]
 
