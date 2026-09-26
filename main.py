@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}))
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 MONTHS_TR = {
     1: "Ocak", 2: "Şubat", 3: "Mart", 4: "Nisan", 5: "Mayıs", 6: "Haziran",
