@@ -28,6 +28,8 @@ def fetch_league_date(args):
                 comp = event['competitions'][0]
                 teams = comp['competitors']
                 status_obj = comp.get('status', {})
+                status_type = status_obj.get('type', {})
+                state = status_type.get('state', '')
                 
                 match_time = "--:--"
                 match_date = ""
@@ -40,20 +42,30 @@ def fetch_league_date(args):
                     except Exception:
                         pass
 
-                # Canlı dakika bilgisi (Örn: "67'", "45+2'")
+                # Dakika Bilgisini Çekme (Farklı ESPN parametrelerini tara)
                 display_clock = status_obj.get('displayClock', '')
-                if display_clock and not display_clock.endswith("'"):
-                    display_clock += "'"
+                short_detail = status_type.get('shortDetail', '')
+                
+                match_minute = ""
+                if state == 'in':
+                    if display_clock and display_clock != '0:00':
+                        match_minute = f"{display_clock}'"
+                    elif short_detail and "'" in short_detail:
+                        match_minute = short_detail
+                    elif short_detail and ("HT" in short_detail or "IY" in short_detail or "Halftime" in short_detail):
+                        match_minute = "İY"
+                    else:
+                        match_minute = "Canlı"
 
                 matches.append({
                     'home': teams[0]['team']['displayName'],
                     'away': teams[1]['team']['displayName'],
                     'homeScore': int(teams[0].get('score', 0)) if str(teams[0].get('score', 0)).isdigit() else 0,
                     'awayScore': int(teams[1].get('score', 0)) if str(teams[1].get('score', 0)).isdigit() else 0,
-                    'status': 'FINISHED' if status_obj.get('type', {}).get('state') == 'post' else ('LIVE' if status_obj.get('type', {}).get('state') == 'in' else 'PENDING'),
+                    'status': 'FINISHED' if state == 'post' else ('LIVE' if state == 'in' else 'PENDING'),
                     'matchTime': match_time,
                     'matchDate': match_date,
-                    'matchMinute': display_clock
+                    'matchMinute': match_minute
                 })
     except Exception:
         pass
