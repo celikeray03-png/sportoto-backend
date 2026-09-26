@@ -5,28 +5,45 @@ from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
+CORS(app, resources={r"/*": {"origins": "*"}))
 
 MONTHS_TR = {
     1: "Ocak", 2: "Şubat", 3: "Mart", 4: "Nisan", 5: "Mayıs", 6: "Haziran",
     7: "Temmuz", 8: "Ağustos", 9: "Eylül", 10: "Ekim", 11: "Kasım", 12: "Aralık"
 }
 
-# Sadece Milli Maçların Olabileceği Lig/Turnuva Kodları
-LEAGUES = ["uefa.nations", "fifa.friendly", "global"]
+# Sadece senin kuponunda geçen takımların olası İngilizce/Türkçe ad anahtarları
+TARGET_TEAMS = [
+    "turkey", "turkiye", "france", "fransa", "italy", "italya",
+    "sweden", "isvec", "romania", "romanya", "belgium", "belcika",
+    "slovenia", "slovenya", "scotland", "iskocya", "bulgaria", "bulgaristan",
+    "luxembourg", "luksemburg", "north macedonia", "kuzey makedonya",
+    "switzerland", "isvicre", "czechia", "czech republic", "cekya",
+    "croatia", "hirvatistan", "england", "ingiltere", "spain", "ispanya",
+    "lithuania", "litvanya", "azerbaijan", "azerbaycan", "austria", "avusturya",
+    "kosovo", "kosova", "denmark", "danimarka", "wales", "galler",
+    "serbia", "sirbistan", "netherlands", "hollanda", "germany", "almanya",
+    "greece", "yunanistan", "norway", "norvec", "portugal", "portekiz"
+]
 
-def fetch_single_request(args):
-    league, date_str = args
+def fetch_day_scores(date_str):
     matches = []
     try:
-        # Virgüllü değil, her gün için TEK tarih gönderiyoruz (ESPN %100 kabul eder)
-        url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{league}/scoreboard?dates={date_str}"
+        url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/scoreboard?dates={date_str}&limit=400"
         res = requests.get(url, timeout=2.5)
-        
         if res.status_code == 200:
             for event in res.json().get('events', []):
                 comp = event['competitions'][0]
                 teams = comp['competitors']
+                
+                h_name = teams[0]['team']['displayName'].lower()
+                a_name = teams[1]['team']['displayName'].lower()
+                
+                # Sadece kuponumuzdaki takımlardan biri bu maçta geçiyorsa al
+                is_relevant = any(t in h_name or t in a_name for t in TARGET_TEAMS)
+                if not is_relevant:
+                    continue
+
                 status_obj = comp.get('status', {})
                 status_type = status_obj.get('type', {})
                 state = status_type.get('state', '')
@@ -73,15 +90,11 @@ def get_scores():
     all_matches = []
     today = datetime.now()
     
-    # Dün + Bugün + Önümüzdeki 4 Gün
+    # Dün + Bugün + Önümüzdeki 4 Gün (6 Günlük Tarama)
     date_list = [(today + timedelta(days=i)).strftime("%Y%m%d") for i in range(-1, 5)]
-    
-    # 3 Lig x 6 Gün = Toplam 18 Mikro İstek
-    tasks = [(league, d) for league in LEAGUES for d in date_list]
 
-    # 18 isteği aynı anda paralel çalıştırır (Toplam süre ~0.3 saniye sürer)
-    with ThreadPoolExecutor(max_workers=18) as executor:
-        for res in executor.map(fetch_single_request, tasks):
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        for res in executor.map(fetch_day_scores, date_list):
             all_matches.extend(res)
 
     return jsonify({'status': 'success', 'matches': all_matches})
