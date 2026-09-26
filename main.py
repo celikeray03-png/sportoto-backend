@@ -5,12 +5,10 @@ import requests
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from flask_sqlalchemy import SQLAlchemy
-import json
 
 app = Flask(__name__)
 CORS(app)
 
-# Veritabanı Bağlantısı
 DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:postgres@localhost:5432/postgres')
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
@@ -32,6 +30,7 @@ class Coupon(db.Model):
     __tablename__ = 'coupons'
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(100), nullable=False)
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'))
     matches_data = db.Column(db.JSON, nullable=False)
 
 class UserPermission(db.Model):
@@ -74,9 +73,8 @@ def fetch_league_date(args):
         pass
     return matches
 
-# --- API ENDPOINTLERİ ---
+# --- ENDPOINTLER ---
 
-# 1. Kayıt Ol
 @app.route('/api/register', methods=['POST'])
 def register():
     data = request.json
@@ -93,9 +91,8 @@ def register():
     db.session.add(new_user)
     db.session.commit()
 
-    return jsonify({'status': 'success', 'message': 'Kayıt başarılı! Giriş yapabilirsiniz.', 'user': {'id': new_user.id, 'username': new_user.username, 'role': new_user.role}})
+    return jsonify({'status': 'success', 'message': 'Kayıt başarılı!', 'user': {'id': new_user.id, 'username': new_user.username, 'role': new_user.role}})
 
-# 2. Giriş Yap
 @app.route('/api/login', methods=['POST'])
 def login():
     data = request.json
@@ -106,58 +103,68 @@ def login():
     if not user:
         return jsonify({'status': 'error', 'message': 'Hatalı kullanıcı adı veya şifre.'}), 401
 
-    return jsonify({
-        'status': 'success',
-        'user': {'id': user.id, 'username': user.username, 'role': user.role}
-    })
+    return jsonify({'status': 'success', 'user': {'id': user.id, 'username': user.username, 'role': user.role}})
 
-# 3. Tüm Kullanıcıları Listele (Admin İçi)
 @app.route('/api/users', methods=['GET'])
 def get_users():
     users = User.query.filter(User.role != 'admin').all()
     user_list = [{'id': u.id, 'username': u.username} for u in users]
     return jsonify({'status': 'success', 'users': user_list})
 
-# 4. Kupon Kaydet ve İzinleri Ata (Admin)
-@app.route('/api/admin/save-coupon', methods=['POST'])
+# Spor Toto Kupon Kaydetme
+@app.route('/api/save-coupon', methods=['POST'])
 def save_coupon():
     data = request.json
-    title = data.get('title', 'Spor Toto Kuponu')
+    user_id = data.get('user_id')
+    title = data.get('title', 'Spor Toto Kuponum')
     matches_data = data.get('matches_data')
-    target_user_ids = data.get('user_ids', []) # Seçilen Kullanıcı ID'leri
+    target_user_ids = data.get('target_user_ids', []) # Admin ise seçtiği kullanıcı id'leri
 
-    new_coupon = Coupon(title=title, matches_data=matches_data)
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'status': 'error', 'message': 'Kullanıcı bulunamadı.'}), 404
+
+    new_coupon = Coupon(title=title, created_by=user_id, matches_data=matches_data)
     db.session.add(new_coupon)
     db.session.commit()
 
-    # İzinleri Ekle
-    for uid in target_user_ids:
-        perm = UserPermission(user_id=uid, coupon_id=new_coupon.id)
-        db.session.add(perm)
-    
-    db.session.commit()
-    return jsonify({'status': 'success', 'message': 'Kupon başarıyla oluşturuldu ve seçilen kişilere tanımlandı.'})
+    # Admin başkalarına atadıysa izin tablosuna ekle
+    if user.role == 'admin' and target_user_ids:
+        for uid in target_user_ids:
+            perm = UserPermission(user_id=uid, coupon_id=new_coupon.id)
+            db.session.add(perm)
+        db.session.commit()
 
-# 5. Kullanıcıya Özel Kuponları Getir
+    return jsonify({'status': 'success', 'message': 'Kupon başarıyla kaydedildi.'})
+
+# Kullanıcının Kuponlarını Getir
 @app.route('/api/user/coupons/<int:user_id>', methods=['GET'])
 def get_user_coupons(user_id):
     user = User.query.get(user_id)
     if not user:
         return jsonify({'status': 'error', 'message': 'Kullanıcı bulunamadı.'}), 404
 
-    if user.role == 'admin':
-        # Admin tüm kuponları görür
-        coupons = Coupon.query.order_by(Coupon.id.desc()).all()
-    else:
-        # Normal kullanıcı sadece yetkisi olanları görür
-        perms = UserPermission.query.filter_by(user_id=user_id).all()
-        coupon_ids = [p.coupon_id for p in perms]
-        coupons = Coupon.query.filter(Coupon.id.in_(coupon_ids)).order_by(Coupon.id.desc()).all()
+    # 1. Kullanıcının kendi yüklediği kuponlar
+    own_coupons = Coupon.query.filter_by(created_by=user_id).all()
 
-    result = [{'id': c.id, 'title': c.title, 'matches_data': c.matches_data} for c in coupons]
+    # 2. Admin'in bu kullanıcıya gösterilmesini onayladığı kuponlar
+    perms = UserPermission.query.filter_by(user_id=user_id).all()
+    permitted_coupon_ids = [p.coupon_id for p in perms]
+    permitted_coupons = Coupon.query.filter(Coupon.id.in_(permitted_coupon_ids)).all()
+
+    # Birleştir
+    all_coupons_dict = {c.id: c for c in own_coupons + permitted_coupons}
+    sorted_coupons = sorted(all_coupons_dict.values(), key=lambda x: x.id, reverse=True)
+
+    result = [{
+        'id': c.id,
+        'title': c.title,
+        'created_by': c.created_by,
+        'matches_data': c.matches_data
+    } for c in sorted_coupons]
+
     return jsonify({'status': 'success', 'coupons': result})
 
-# 6. Canlı Skorları Çek
 @app.route('/api/scores', methods=['GET'])
 def get_scores():
     all_matches = []
