@@ -1,4 +1,4 @@
-import os, json, requests
+import os, requests
 from flask import Flask, jsonify
 from flask_cors import CORS
 from datetime import datetime, timedelta
@@ -7,25 +7,21 @@ from concurrent.futures import ThreadPoolExecutor
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-LEAGUES = ["tur.1", "tur.2", "uefa.nations", "fifa.friendly", "eng.1", "ger.1", "esp.1", "ita.1", "fra.1"]
-
 MONTHS_TR = {
     1: "Ocak", 2: "Şubat", 3: "Mart", 4: "Nisan", 5: "Mayıs", 6: "Haziran",
     7: "Temmuz", 8: "Ağustos", 9: "Eylül", 10: "Ekim", 11: "Kasım", 12: "Aralık"
 }
 
-def fetch_league_date(args):
-    league, date_str = args
+def fetch_date_scores(date_str):
     matches = []
     try:
-        url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{league}/scoreboard?dates={date_str}"
+        url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/scoreboard?dates={date_str}&limit=300"
         response = requests.get(url, timeout=3.0)
         if response.status_code == 200:
             for event in response.json().get('events', []):
                 comp = event['competitions'][0]
                 teams = comp['competitors']
                 
-                # Tarih ve Saat Bilgisi (UTC -> UTC+3 TR Saati)
                 match_time = "--:--"
                 match_date = ""
                 raw_date = event.get('date')
@@ -54,11 +50,11 @@ def fetch_league_date(args):
 def get_scores():
     all_matches = []
     today = datetime.now()
+    # Spor Toto bültenini kapsayacak şekilde: Dün + Bugün + Önümüzdeki 5 Gün (Toplam 7 Gün)
     date_list = [(today + timedelta(days=i)).strftime("%Y%m%d") for i in range(-1, 6)]
-    tasks = [(league, d) for league in LEAGUES for d in date_list]
 
-    with ThreadPoolExecutor(max_workers=15) as executor:
-        for res in executor.map(fetch_league_date, tasks):
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        for res in executor.map(fetch_date_scores, date_list):
             all_matches.extend(res)
 
     return jsonify({'status': 'success', 'matches': all_matches})
